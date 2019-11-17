@@ -1,0 +1,225 @@
+Description:
+  VPC Creation for stack
+AWSTemplateFormatVersion: 2010-09-09
+Parameters:
+  KeyName:
+    Description: 'EC2 Keypair for SSH of instances'
+    Type: 'AWS::EC2::KeyPair::KeyName'
+    Default: 'ec2test'
+Resources:
+  VpcRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: 'Allow'
+            Action: 'sts:AssumeRole'
+            Principal:
+              Service:
+                - 'ec2.amazonaws.com'
+      Path: '/'
+      Policies:
+        - PolicyName: 'VpcPolicy'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: 'Allow'
+                Action:
+                  - ec2:*
+                Resource: '*'
+              - Effect: 'Allow'
+                Action:
+                  - ssm:*
+                Resource: '*'
+  VpcInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: '/'
+      Roles:
+        - Ref: 'VpcRole'
+  NewSystemVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: '172.31.0.0/16'
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      InstanceTenancy: default
+      Tags:
+        - Key: 'Name'
+          Value: 'NewSystemVPC'
+  NewSystemInternetGateway:
+    Type: AWS::EC2::InternetGateway
+  NewSystemGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+        VpcId:
+          Ref: 'NewSystemVPC'
+        InternetGatewayId: !
+          Ref: 'NewSystemInternetGateway'
+  NewSystemNAT:
+    DependsOn: NewSystemGatewayAttachment
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt 'NewSystemEIP.AllocationId'
+      SubnetId:
+        Ref: 'NewSystemPublicSubnet'
+  NewSystemPublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: 
+        Ref: 'NewSystemVPC'
+      CidrBlock: 172.31.0.0/20
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: 'Name'
+          Value: 'New System Public Subnet'
+  NewSystemPrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: 
+        Ref: 'NewSystemVPC'
+      CidrBlock: 172.31.16.0/20
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: 'Name'
+          Value: 'New System Private Subnet'
+  NewSystemPublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: 
+        Ref: 'NewSystemVPC'
+  NewSystemPrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: 
+        Ref: 'NewSystemVPC'
+  NewSystemPublicInternetRoute:
+    Type: AWS::EC2::Route
+    DependsOn: NewSystemGatewayAttachment
+    Properties:
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId:
+        Ref: 'NewSystemInternetGateway'
+      RouteTableId:
+        Ref: 'NewSystemPublicRouteTable'
+  NewSystemPrivateInternetRoute:
+    Type: AWS::EC2::Route
+    DependsOn: NewSystemGatewayAttachment
+    Properties:
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !
+        Ref: 'NewSystemInternetGateway'
+      RouteTableId:
+        Ref: 'NewSystemPrivateRouteTable'
+  NewSystemPublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId:
+        Ref: 'NewSystemPublicRouteTable'
+      SubnetId:
+        Ref: 'NewSystemPublicSubnet'
+  NewSystemPrivateSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId:
+        Ref: 'NewSystemPrivateRouteTable'
+      SubnetId:
+        Ref: 'NewSystemPrivateSubnet'
+  NewSystemMachineSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: 'Sec group private machines in vpc'
+      GroupDescription: 'For private machine connection'
+      VpcId:
+        Ref: 'NewSystemVPC'
+      SecurityGroupIngress:
+        - IpProtocol: -1
+          CidrIp: 172.31.0.0/16
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          FromPort: 80
+          ToPort: 80
+  NewSystemBastionSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: 'Sec group for Bastion Host and Ansible Controller'
+      GroupDescription: 'For bastion/ansible connection'
+      VpcId:
+        Ref: 'NewSystemVPC'
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: -1
+          CidrIp: 172.31.0.0/16
+  NewSystemEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc c
+  AppMachine1:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: 't2.micro'
+      ImageId: 'ami-00dc79254d0461090'
+      IamInstanceProfile:
+        Ref: 'VpcInstanceProfile'
+      KeyName:
+        Ref: 'KeyName'
+      NetworkInterfaces:
+        - DeviceIndex: '0'
+          GroupSet:
+            - Ref: 'NewSystemMachineSecurityGroup'
+          SubnetId:
+            Ref: 'NewSystemPrivateSubnet'
+      Tags:
+        - Key: 'Name'
+          Value: 'App Server 1'
+  AppMachine2:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: 't2.micro'
+      ImageId: 'ami-00dc79254d0461090'
+      IamInstanceProfile:
+        Ref: 'VpcInstanceProfile'
+      KeyName:
+        Ref: 'KeyName'
+      NetworkInterfaces:
+        - DeviceIndex: '0'
+          GroupSet:
+            - Ref: 'NewSystemMachineSecurityGroup'
+          SubnetId:
+            Ref: 'NewSystemPrivateSubnet'
+      Tags:
+        - Key: 'Name'
+          Value: 'App Server 2'
+  AnsibleMachine:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: 't2.micro'
+      ImageId: 'ami-00dc79254d0461090'
+      IamInstanceProfile:
+        Ref: 'VpcInstanceProfile'
+      KeyName:
+        Ref: 'KeyName'
+      NetworkInterfaces:
+        - DeviceIndex: '0'
+          GroupSet:
+            - Ref: 'NewSystemBastionSecurityGroup'
+          SubnetId:
+            Ref: 'NewSystemPublicSubnet'
+      Tags:
+        - Key: 'Name'
+          Value: 'The Ansible Controller'
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          sudo yum update
+          sudo yum install httpd -y
+          sudo amazon-linux-extras- install ansible2 -y
